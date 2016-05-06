@@ -157,6 +157,8 @@ var (
 
 	TYPE_OF_UUID  = r.TypeOf(UUID{})
 	TYPE_OF_BYTES = r.TypeOf([]byte{})
+
+	handlers = map[uintptr]XpcEventHandler{}
 )
 
 type XpcEventHandler interface {
@@ -164,17 +166,25 @@ type XpcEventHandler interface {
 }
 
 func XpcConnect(service string, eh XpcEventHandler) XPC {
+	ctx := uintptr(unsafe.Pointer(&eh))
+	handlers[ctx] = eh
+
 	cservice := C.CString(service)
 	defer C.free(unsafe.Pointer(cservice))
-	return XPC{conn: C.XpcConnect(cservice, unsafe.Pointer(&eh))}
+	return XPC{conn: C.XpcConnect(cservice, C.uintptr_t(ctx))}
 }
 
 //export handleXpcEvent
-func handleXpcEvent(event C.xpc_object_t, p unsafe.Pointer) {
+func handleXpcEvent(event C.xpc_object_t, p C.ulong) {
 	//log.Printf("handleXpcEvent %#v %#v\n", event, p)
 
 	t := C.xpc_get_type(event)
-	eh := *((*XpcEventHandler)(p))
+
+	eh := handlers[uintptr(p)]
+	if eh == nil {
+		//log.Println("no handler for", p)
+		return
+	}
 
 	if t == C.TYPE_ERROR {
 		if event == C.ERROR_CONNECTION_INVALID {
@@ -269,14 +279,14 @@ func valueToXpc(val r.Value) C.xpc_object_t {
 }
 
 //export arraySet
-func arraySet(u unsafe.Pointer, i C.int, v C.xpc_object_t) {
-	a := *(*Array)(u)
+func arraySet(u C.uintptr_t, i C.int, v C.xpc_object_t) {
+	a := *(*Array)(unsafe.Pointer(uintptr(u)))
 	a[i] = xpcToGo(v)
 }
 
 //export dictSet
-func dictSet(u unsafe.Pointer, k *C.char, v C.xpc_object_t) {
-	d := *(*Dict)(u)
+func dictSet(u C.uintptr_t, k *C.char, v C.xpc_object_t) {
+	d := *(*Dict)(unsafe.Pointer(uintptr(u)))
 	d[C.GoString(k)] = xpcToGo(v)
 }
 
